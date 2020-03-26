@@ -53,7 +53,7 @@ beta1 = 0.5
 ngpu = 1
 
 # Dataloader
-dataroot = "~/datasets/april/velocity"
+dataroot = "/home/raynor/datasets/april/velocity/"
 dataset = BasicDataset(model_dir=dataroot)
 
 dataloader = torch.utils.data.DataLoader(dataset, batch_size=batch_size,
@@ -75,7 +75,7 @@ netG.apply(weights_init)
 
 
 # Create Discriminator
-netD = Discriminator(ngpu).to(device)
+netD = Discriminator(ngpu, nc, ndf).to(device)
 
 # Handle multi-gpu if desired
 if (device.type == 'cuda') and (ngpu > 1):
@@ -122,7 +122,7 @@ for epoch in range(num_epochs):
         ## Train with all-real batch
         netD.zero_grad()
         # Format batch
-        real_cpu = data[0].to(device)
+        real_cpu = data['model'].to(device)
         b_size = real_cpu.size(0)
         label = torch.full((b_size,), real_label, device=device)
         # Forward pass real batch through D

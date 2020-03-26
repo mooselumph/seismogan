@@ -36,25 +36,24 @@ class BasicDataset(Dataset):
     def __getitem__(self, i):
         idx = self.ids[i]
         
+        d = dict()
+
         if self.model_dir:
         
             model_file = glob(self.model_dir + idx + '*')            
             assert len(model_file) == 1, \
                 f'Either no model or multiple models found for the ID {idx}: {model_file}'
-            
-            model = torch.from_numpy(np.load(mask_file[0]))
-        else:
-            model = None
+
+            model = np.load(model_file[0])[np.newaxis,:,:]
+            d['model'] = torch.tensor(model)
         
-        if self.gather_file:
+        if self.gather_dir:
             gather_file = glob(self.gather_dir + idx + '*')
     
             assert len(gather_file) == 1, \
                 f'Either no gather file or multiple files found for the ID {idx}: {gather_file}'
                 
-            gather = torch.from_numpy(np.load(img_file[0]))
-        else:
-            gather = None
+            d['gather'] = torch.tensor(np.load(gather_file[0]))
 
-        return {'model': model, 'gather': gather}
+        return d 
 
