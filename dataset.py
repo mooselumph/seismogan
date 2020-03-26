@@ -33,7 +33,6 @@ class BasicDataset(Dataset):
 
 
     def __getitem__(self, i):
-        print('here')
         idx = self.ids[i]
         
         d = dict()
