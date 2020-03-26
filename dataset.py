@@ -12,7 +12,6 @@ from glob import glob
 import torch
 from torch.utils.data import Dataset
 import logging
-from PIL import Image
 
 
 class BasicDataset(Dataset):
@@ -34,6 +33,7 @@ class BasicDataset(Dataset):
 
 
     def __getitem__(self, i):
+        print('here')
         idx = self.ids[i]
         
         d = dict()
@@ -45,7 +45,7 @@ class BasicDataset(Dataset):
                 f'Either no model or multiple models found for the ID {idx}: {model_file}'
 
             model = np.load(model_file[0])[np.newaxis,:,:]
-            d['model'] = torch.tensor(model)
+            d['model'] = torch.tensor(model,dtype=torch.float32)
         
         if self.gather_dir:
             gather_file = glob(self.gather_dir + idx + '*')
@@ -53,7 +53,7 @@ class BasicDataset(Dataset):
             assert len(gather_file) == 1, \
                 f'Either no gather file or multiple files found for the ID {idx}: {gather_file}'
                 
-            d['gather'] = torch.tensor(np.load(gather_file[0]))
+            d['gather'] = torch.tensor(np.load(gather_file[0]),dtype=torch.float32)
 
         return d 
 

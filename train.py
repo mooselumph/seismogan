@@ -44,7 +44,7 @@ image_size = 128
 ndf = 64
 
 # Training
-batch_size = 128
+batch_size = 10
 num_epochs = 5
 lr = 0.0002
 beta1 = 0.5
@@ -53,11 +53,13 @@ beta1 = 0.5
 ngpu = 1
 
 # Dataloader
-dataroot = "/home/raynor/datasets/april/velocity/"
+#dataroot = "/home/raynor/datasets/april/velocity/"
+#dataroot = "C:\\Users\\mooselumph\\code\\data\\velocity\\"
+dataroot = 'C:/Users/mooselumph/code/data/velocity/'
 dataset = BasicDataset(model_dir=dataroot)
 
 dataloader = torch.utils.data.DataLoader(dataset, batch_size=batch_size,
-                                         shuffle=True, num_workers=2)
+                                         shuffle=True)
 
 
 device = torch.device("cuda:0" if (torch.cuda.is_available() and ngpu > 0) else "cpu")
