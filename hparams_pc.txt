@@ -1,0 +1,2 @@
+name    batch_size  load_name   load_step  dataroot                                modelroot
+abitha2 10          abitha      -1         C:/Users/mooselumph/code/data/velocity/ C:/Users/mooselumph/code/seismogan/saved/	

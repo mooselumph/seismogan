@@ -16,7 +16,7 @@ import torch.optim as optim
 from torch.utils.tensorboard import SummaryWriter
 from types import SimpleNamespace
 
-from utils import load_hparams
+from utils import load_hparams, save_models, load_models
 
 from model import Discriminator, Generator
 from dataset import BasicDataset
@@ -58,56 +58,73 @@ def train(
         n_epochs = 500,
         n_discr = 1,
         n_gen = 1,
-        image_interval = 100,
+        image_interval = 1,
+        save_interval = 1,
+        save_dir = None,
         scheduler = None,
         ):
         
     step = 0
     
-    for epoch in range(n_epochs):
+    try:
+    
+        for epoch in range(n_epochs):
+            
+            for real in dataloader:
+                
+                discr_optimizer.zero_grad()            
+                gen_optimizer.zero_grad()
+                
+                # Get real and fake data
+                batch_size = real.shape[0]
+                fake = gen.sample(batch_size = batch_size)
+                                
+                # Train Discriminator
+                D_real = discr(real)
+                D_fake = discr(fake)
+                loss_discr = discr_loss(D_real,D_fake)
+    
+                if epoch % (n_gen + n_discr) <= n_discr:
+                    loss_discr.backward()
+                    discr_optimizer.step()
+                                
+                # Train Generator
+                D_fake = discr(fake)
+                loss_gen = gen_loss(D_fake)
+                
+                if epoch % (n_gen + n_discr) > n_gen:
+                    loss_gen.backward()
+                    gen_optimizer.step()
+                    
+                # Log Losses
+                tb_writer.add_scalars('Discriminator',
+                                      {'D_real':torch.sigmoid(D_real).mean().item(),
+                                       'D_fake':torch.sigmoid(D_fake).mean().item()},step)
+                tb_writer.add_scalar('loss_D',loss_discr,step)
+                tb_writer.add_scalar('loss_G',loss_gen,step)
+                
+                # Show generated images
+                if step % int(image_interval*len(dataloader)) == 1 or (step == len(dataloader)*n_epochs - 1):
+                    
+                    with torch.no_grad():
+                        fake = gen.sample(batch_size= real.shape[0]).detach().cpu()    
+                    #grid = vutils.make_grid(fake, padding=2, normalize=True[np.newaxis]
+                    tb_writer.add_images('images', fake, step)
+                    
+                    
+                if step % int(save_interval*len(dataloader)) == 1 or (step == len(dataloader)*n_epochs - 1):
+                    save_models(save_dir,gen,discr,step)
+                    
+                    
+                step += 1
         
-        for real in dataloader:
             
-            discr_optimizer.zero_grad()            
-            gen_optimizer.zero_grad()
-            
-            # Get real and fake data
-            batch_size = real.shape[0]
-            fake = gen.sample(batch_size = batch_size)
-                            
-            # Train Discriminator
-            D_real = discr(real)
-            D_fake = discr(fake)
-            loss_discr = discr_loss(D_real,D_fake)
+        return True
+                
+    except KeyboardInterrupt: 
+        save_models(save_dir,gen,discr,step)
+        return False
 
-            if epoch % (n_gen + n_discr) <= n_discr:
-                loss_discr.backward()
-                discr_optimizer.step()
-                            
-            # Train Generator
-            D_fake = discr(fake)
-            loss_gen = gen_loss(D_fake)
-            
-            if epoch % (n_gen + n_discr) > n_gen:
-                loss_gen.backward()
-                gen_optimizer.step()
-                
-            # Log Losses
-            tb_writer.add_scalars('Discriminator',
-                                  {'D_real':torch.sigmoid(D_real).mean().item(),
-                                   'D_fake':torch.sigmoid(D_fake).mean().item()},step)
-            tb_writer.add_scalar('loss_D',loss_discr,step)
-            tb_writer.add_scalar('loss_G',loss_gen,step)
-            
-            # Show generated images
-            if step % int(image_interval*batch_size*len(dataloader)) == 1:
-                
-                with torch.no_grad():
-                    fake = gen.sample(batch_size= real.shape[0]).detach().cpu()    
-                #grid = vutils.make_grid(fake, padding=2, normalize=True[np.newaxis]
-                tb_writer.add_images('images', fake, step)
-                
-            step += 1
             
 if __name__ == '__main__':
     
@@ -137,10 +154,11 @@ if __name__ == '__main__':
         'nD': 1,
         'nG': 2,
         'image_interval': 1,
+        'save_interval': 2,
         'dataroot': '/home/raynor/datasets/april/velocity/',
         'modelroot': '/home/raynor/code/seismogan/saved/',
-        'loadD': False,
-        'loadG': False,
+        'load_name': '',
+        'load_step': -1,
         }
     
     # Load params from text file
@@ -152,31 +170,32 @@ if __name__ == '__main__':
         
     for i,h in enumerate(hparams):
         
-        
-        writer = SummaryWriter(comment=f'_{h.name}')
-        writer.add_hparams(vars(h),{})
-                
-        dataset = BasicDataset(model_dir=h.dataroot,device=device)
-        dataloader = torch.utils.data.DataLoader(dataset, batch_size=h.batch_size, shuffle=True)
-    
-        print('Loading models')
-        
-        gen = Generator(h.nz, h.nc, h.ngf, device)
-        discr = Discriminator(h.nc, h.ndf, device)
-        
-        if h.loadD:
-            discr.load_state_dict(torch.load(os.path.join(h.modelroot,h.loadD)))
+        with SummaryWriter(comment=f'_{h.name}') as writer:
             
-        if h.loadG:
-            discr.load_state_dict(torch.load(os.path.join(h.modelroot,h.loadG)))
+            writer.add_hparams(vars(h),{})
+                    
+            dataset = BasicDataset(model_dir=h.dataroot,device=device)
+            dataloader = torch.utils.data.DataLoader(dataset, batch_size=h.batch_size, shuffle=True)
         
-        gen_opt = optim.Adam(gen.parameters(), lr=h.lrG, betas=(h.beta1, h.beta2))
-        discr_opt = optim.Adam(discr.parameters(), lr=h.lrD, betas=(h.beta1, h.beta2))
-    
-        print('Beginning training')
-    
-        try:
-            train(
+            print('Loading models')
+            
+            gen = Generator(h.nz, h.nc, h.ngf, device)
+            discr = Discriminator(h.nc, h.ndf, device)
+            
+            if h.load_name:
+                load_models(os.path.join(h.modelroot,h.load_name),gen,discr,h.load_step)
+                
+            gen_opt = optim.Adam(gen.parameters(), lr=h.lrG, betas=(h.beta1, h.beta2))
+            discr_opt = optim.Adam(discr.parameters(), lr=h.lrD, betas=(h.beta1, h.beta2))
+        
+            # Create save dir
+            save_dir = os.path.join(h.modelroot,h.name)        
+            if not os.path.exists(save_dir):
+                os.mkdir(save_dir)
+                
+            print('Beginning training')
+        
+            completed = train(
                 dataloader,
                 discr,
                 gen,
@@ -189,27 +208,22 @@ if __name__ == '__main__':
                 n_discr = h.nD,
                 n_gen = h.nG,
                 image_interval = h.image_interval,
+                save_interval = h.save_interval,
+                save_dir = save_dir
                   )
             
-            print('Completed training')
+            if completed:
+                print('Completed training')
             
-            torch.save(gen.state_dict(), os.path.join(h.modelroot,f'gen_{h.name}.pth'))
-            torch.save(discr.state_dict(), os.path.join(h.modelroot,f'discr_{h.name}.pth'))
-            
-        except KeyboardInterrupt:
-            
-            torch.save(gen.state_dict(), os.path.join(h.modelroot,f'gen_{h.name}_interrupted.pth'))
-            torch.save(discr.state_dict(), os.path.join(h.modelroot,f'discr_{h.name}_interrupted.pth'))
-            
-            print('Interrupted models saved.')
-            
-            if i+1 < len(hparams):
-                response = input("Would you like to exit the hyperparameter loop? (y/n):\n")
-                if response != 'y':
-                    continue
-            
-            sys.exit(0)
-            
+            else:
+                print('Interrupted models saved.')
+                if i+1 < len(hparams):
+                     response = input("Would you like to exit the hyperparameter loop? (y/n):\n")
+                     if response == 'y':
+                         break
+                
+                
+                
     
         
         
