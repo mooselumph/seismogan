@@ -44,6 +44,10 @@ class BasicDataset(Dataset):
                 f'Either no model or multiple models found for the ID {idx}: {model_file}'
 
             model = np.load(model_file[0])[np.newaxis,:,:]
+            model -= np.min(model,axis=None)
+            model /= np.max(model,axis=None)
+            model = model*2-1
+
             d['model'] = torch.tensor(model,dtype=torch.float32)
         
         if self.gather_dir:

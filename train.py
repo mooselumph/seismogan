@@ -53,9 +53,8 @@ beta1 = 0.5
 ngpu = 1
 
 # Dataloader
-#dataroot = "/home/raynor/datasets/april/velocity/"
-#dataroot = "C:\\Users\\mooselumph\\code\\data\\velocity\\"
-dataroot = 'C:/Users/mooselumph/code/data/velocity/'
+dataroot = "/home/raynor/datasets/april/velocity/"
+#dataroot = 'C:/Users/mooselumph/code/data/velocity/'
 dataset = BasicDataset(model_dir=dataroot)
 
 dataloader = torch.utils.data.DataLoader(dataset, batch_size=batch_size,
