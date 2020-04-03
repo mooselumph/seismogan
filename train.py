@@ -72,28 +72,31 @@ def train(
             
             for real in dataloader:
                 
-                discr_optimizer.zero_grad()            
-                gen_optimizer.zero_grad()
-                
                 # Get real and fake data
                 batch_size = real.shape[0]
                 fake = gen.sample(batch_size = batch_size)
                                 
                 # Train Discriminator
+                discr_optimizer.zero_grad()  
+
                 D_real = discr(real)
-                D_fake = discr(fake)
+                D_fake = discr(fake.detach())
+
                 loss_discr = discr_loss(D_real,D_fake)
+                loss_discr.backward()
     
-                if epoch % (n_gen + n_discr) <= n_discr:
-                    loss_discr.backward()
+                if epoch % (n_gen + n_discr) < n_discr:
                     discr_optimizer.step()
                                 
                 # Train Generator
+                gen_optimizer.zero_grad()
+
                 D_fake = discr(fake)
+
                 loss_gen = gen_loss(D_fake)
-                
-                if epoch % (n_gen + n_discr) > n_gen:
-                    loss_gen.backward()
+                loss_gen.backward()
+
+                if epoch % (n_gen + n_discr) >= n_discr:
                     gen_optimizer.step()
                     
                 # Log Losses
