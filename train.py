@@ -5,6 +5,7 @@ Created on Mon Mar 30 08:50:01 2020
 @author: mooselumph
 """
 
+import random
 import numpy as np
 import os, sys
 import argparse
@@ -62,8 +63,13 @@ def train(
         save_interval = 1,
         save_dir = None,
         scheduler = None,
+        seed = 999,
         ):
-        
+    
+    
+    random.seed(seed)
+    torch.manual_seed(seed)
+            
     step = 0
     
     try:
@@ -110,7 +116,7 @@ def train(
                 if step % int(image_interval*len(dataloader)) == 1 or (step == len(dataloader)*n_epochs - 1):
                     
                     with torch.no_grad():
-                        fake = gen.sample(batch_size= real.shape[0]).detach().cpu()    
+                        fake = gen.fixed_sample().detach().cpu()    
                     #grid = vutils.make_grid(fake, padding=2, normalize=True[np.newaxis]
                     tb_writer.add_images('images', fake, step)
                     

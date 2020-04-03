@@ -55,6 +55,8 @@ class Generator(nn.Module):
             # state size. (nc) x 128 x 128
         )
         
+        self.fixed_noise = torch.randn(64, nz, 1, 1, device=device)
+        
         self.to(device)
         
         self.apply(weights_init)
@@ -64,6 +66,10 @@ class Generator(nn.Module):
         noise = torch.randn((batch_size, self.nz, 1, 1), device=self.device)
         fake = self.forward(noise)
         return fake
+    
+    def fixed_sample(self):
+        
+        return self.forward(self.fixed_noise)
 
     def forward(self, input):
         return self.main(input)
