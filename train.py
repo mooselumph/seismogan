@@ -94,7 +94,8 @@ def train(
                 
             # Log Losses
             tb_writer.add_scalars('Discriminator',
-                                  {'D_real':torch.sigmoid(D_real),'D_fake':torch.sigmoid(D_fake)},step)
+                                  {'D_real':torch.sigmoid(D_real).mean().item(),
+                                   'D_fake':torch.sigmoid(D_fake).mean().item()},step)
             tb_writer.add_scalar('loss_D',loss_discr,step)
             tb_writer.add_scalar('loss_G',loss_discr,step)
             
@@ -144,7 +145,9 @@ if __name__ == '__main__':
     
     # Load params from text file
     hparams = load_hparams(args.hparams,defaults)
-               
+    
+    device = torch.device(f"cuda:{args.gpu}" if (torch.cuda.is_available()) else "cpu")
+                       
     print('Entering Hyperparameter Loop')
         
     for i,h in enumerate(hparams):
@@ -153,11 +156,9 @@ if __name__ == '__main__':
         writer = SummaryWriter(comment=f'_{h.name}')
         writer.add_hparams(vars(h),{})
                 
-        dataset = BasicDataset(model_dir=h.dataroot)
+        dataset = BasicDataset(model_dir=h.dataroot,device=device)
         dataloader = torch.utils.data.DataLoader(dataset, batch_size=h.batch_size, shuffle=True)
     
-        device = torch.device(f"cuda:{args.gpu}" if (torch.cuda.is_available()) else "cpu")
-        
         print('Loading models')
         
         gen = Generator(h.nz, h.nc, h.ngf, device)

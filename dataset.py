@@ -20,7 +20,7 @@ class BasicDataset(Dataset):
         self.model_dir = model_dir
         self.gather_dir = gather_dir
         
-        assert type(device) != None, "device must be defined"
+        assert device != None, "device must be defined"
         self.device = device
                 
         d = model_dir if model_dir else gather_dir
