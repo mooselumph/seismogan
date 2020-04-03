@@ -97,7 +97,7 @@ def train(
                                   {'D_real':torch.sigmoid(D_real).mean().item(),
                                    'D_fake':torch.sigmoid(D_fake).mean().item()},step)
             tb_writer.add_scalar('loss_D',loss_discr,step)
-            tb_writer.add_scalar('loss_G',loss_discr,step)
+            tb_writer.add_scalar('loss_G',loss_gen,step)
             
             # Show generated images
             if step % int(image_interval*batch_size*len(dataloader)) == 1:
@@ -136,7 +136,7 @@ if __name__ == '__main__':
         'beta2': 0.999,
         'nD': 1,
         'nG': 2,
-        'image_interval': 5,
+        'image_interval': 1,
         'dataroot': '/home/raynor/datasets/april/velocity/',
         'modelroot': '/home/raynor/code/seismogan/saved/',
         'loadD': False,
