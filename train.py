@@ -1,187 +1,215 @@
 # -*- coding: utf-8 -*-
 """
-Created on Thu Mar 26 09:15:29 2020
+Created on Mon Mar 30 08:50:01 2020
 
 @author: mooselumph
 """
 
-from __future__ import print_function
-
-import random
-import torch
-import torch.nn as nn
-import torch.nn.parallel
-import torch.backends.cudnn as cudnn
-
-import torch.optim as optim
-import torch.utils.data
-
-import torchvision.utils as vutils
 import numpy as np
+import os, sys
+import argparse
+import pandas as pd
+import torch
+import torch.nn.functional as F
+import torch.optim as optim
 
+from torch.utils.tensorboard import SummaryWriter
+from types import SimpleNamespace
+
+from utils import load_hparams
+
+from model import Discriminator, Generator
 from dataset import BasicDataset
-from model import Discriminator, Generator, weights_init
-
-# Set random seed for reproducibility
-manualSeed = 999
-#manualSeed = random.randint(1, 10000) # use if you want new results
-print("Random Seed: ", manualSeed)
-random.seed(manualSeed)
-torch.manual_seed(manualSeed)
 
 
-# Root directory for dataset
-nc = 1
+def minimax_discr_loss(D_real,D_fake):
+    """
+    Assumes that discriminator output is in range (-inf,inf)
+    """
+    
+    ones = torch.ones(D_real.shape, device=D_real.device)
+    loss_real = F.binary_cross_entropy(torch.sigmoid(D_real), ones)
+    
+    zeros = torch.zeros(D_fake.shape, device=D_fake.device)
+    loss_fake = F.binary_cross_entropy(torch.sigmoid(D_fake), zeros)
+    
+    return loss_real + loss_fake
 
-# Size of latent space
-nz = 100
-
-# Generator
-ngf = 64
-image_size = 128
-
-# Discriminator
-ndf = 64
-
-# Training
-batch_size = 10
-num_epochs = 5
-lr = 0.0002
-beta1 = 0.5
-
-# Number of GPUs available. Use 0 for CPU mode.
-ngpu = 1
-
-# Dataloader
-#dataroot = "/home/raynor/datasets/april/velocity/"
-#dataroot = "C:\\Users\\mooselumph\\code\\data\\velocity\\"
-dataroot = 'C:/Users/mooselumph/code/data/velocity/'
-dataset = BasicDataset(model_dir=dataroot)
-
-dataloader = torch.utils.data.DataLoader(dataset, batch_size=batch_size,
-                                         shuffle=True)
+def minimax_gen_loss(D_fake):
+    """
+    Maximizes log(D(G(z))) instead of minimizing log(1-D(G(z)))
+    """
+    
+    ones = torch.ones(D_fake.shape, device=D_fake.device)
+    loss = F.binary_cross_entropy(torch.sigmoid(D_fake), ones) 
+    
+    return loss
 
 
-device = torch.device("cuda:0" if (torch.cuda.is_available() and ngpu > 0) else "cpu")
+def train(  
+        dataloader,
+        discr,
+        gen,
+        discr_loss,
+        gen_loss,
+        discr_optimizer,
+        gen_optimizer,
+        tb_writer,
+        n_epochs = 500,
+        n_discr = 1,
+        n_gen = 1,
+        image_interval = 100,
+        scheduler = None,
+        ):
+        
+    step = 0
+    
+    for epoch in range(n_epochs):
+        
+        for real in dataloader:
+            
+            discr_optimizer.zero_grad()            
+            gen_optimizer.zero_grad()
+            
+            # Get real and fake data
+            batch_size = real.shape[0]
+            fake = gen.sample(batch_size = batch_size)
+                            
+            # Train Discriminator
+            D_real = discr(real)
+            D_fake = discr(fake)
+            loss_discr = discr_loss(D_real,D_fake)
 
-# Create Generator
-netG = Generator(ngpu, nz, ngf, nc).to(device)
+            if epoch % (n_gen + n_discr) <= n_discr:
+                loss_discr.backward()
+                discr_optimizer.step()
+                            
+            # Train Generator
+            D_fake = discr(fake)
+            loss_gen = gen_loss(D_fake)
+            
+            if epoch % (n_gen + n_discr) > n_gen:
+                loss_gen.backward()
+                gen_optimizer.step()
+                
+            # Log Losses
+            tb_writer.add_scalars('Discriminator',
+                                  {'D_real':torch.sigmoid(D_real),'D_fake':torch.sigmoid(D_fake)},step)
+            tb_writer.add_scalar('loss_D',loss_discr,step)
+            tb_writer.add_scalar('loss_G',loss_discr,step)
+            
+            # Show generated images
+            if step % int(image_interval*batch_size*len(dataloader)) == 1:
+                
+                with torch.no_grad():
+                    fake = gen.sample(batch_size= real.shape[0]).detach().cpu()    
+                #grid = vutils.make_grid(fake, padding=2, normalize=True[np.newaxis]
+                tb_writer.add_images('images', fake, step)
+                
+            step += 1
+            
+if __name__ == '__main__':
+    
+    
+    print('Loading hyperparameters.')
+    
+    # Get location of hparams.txt
+    parser = argparse.ArgumentParser(description='Train a GAN!')
+    parser.add_argument('-H', '--hparams', metavar='filename', type=str, default='hparams.txt',
+                        help='File containing hyperparamters', dest='hparams')
+    parser.add_argument('-g', '--gpu', metavar='number', type=int, default='0',
+                        help='Number of GPU to use', dest='gpu')
+    args = parser.parse_args()
 
-# Handle multi-gpu if desired
-if (device.type == 'cuda') and (ngpu > 1):
-    netG = nn.DataParallel(netG, list(range(ngpu)))
-
-# Apply the weights_init function to randomly initialize all weights
-#  to mean=0, stdev=0.2.
-netG.apply(weights_init)
-
-
-# Create Discriminator
-netD = Discriminator(ngpu, nc, ndf).to(device)
-
-# Handle multi-gpu if desired
-if (device.type == 'cuda') and (ngpu > 1):
-    netD = nn.DataParallel(netD, list(range(ngpu)))
-
-# Apply the weights_init function to randomly initialize all weights
-#  to mean=0, stdev=0.2.
-netD.apply(weights_init)
-
-
-# Initialize BCELoss function
-criterion = nn.BCELoss()
-
-# Create batch of latent vectors that we will use to visualize
-#  the progression of the generator
-fixed_noise = torch.randn(64, nz, 1, 1, device=device)
-
-# Establish convention for real and fake labels during training
-real_label = 1
-fake_label = 0
-
-# Setup Adam optimizers for both G and D
-optimizerD = optim.Adam(netD.parameters(), lr=lr, betas=(beta1, 0.999))
-optimizerG = optim.Adam(netG.parameters(), lr=lr, betas=(beta1, 0.999))
-
-
-# Training Loop
-
-# Lists to keep track of progress
-img_list = []
-G_losses = []
-D_losses = []
-iters = 0
-
-print("Starting Training Loop...")
-# For each epoch
-for epoch in range(num_epochs):
-    # For each batch in the dataloader
-    for i, data in enumerate(dataloader, 0):
-
-        ############################
-        # (1) Update D network: maximize log(D(x)) + log(1 - D(G(z)))
-        ###########################
-        ## Train with all-real batch
-        netD.zero_grad()
-        # Format batch
-        real_cpu = data['model'].to(device)
-        b_size = real_cpu.size(0)
-        label = torch.full((b_size,), real_label, device=device)
-        # Forward pass real batch through D
-        output = netD(real_cpu).view(-1)
-        # Calculate loss on all-real batch
-        errD_real = criterion(output, label)
-        # Calculate gradients for D in backward pass
-        errD_real.backward()
-        D_x = output.mean().item()
-
-        ## Train with all-fake batch
-        # Generate batch of latent vectors
-        noise = torch.randn(b_size, nz, 1, 1, device=device)
-        # Generate fake image batch with G
-        fake = netG(noise)
-        label.fill_(fake_label)
-        # Classify all fake batch with D
-        output = netD(fake.detach()).view(-1)
-        # Calculate D's loss on the all-fake batch
-        errD_fake = criterion(output, label)
-        # Calculate the gradients for this batch
-        errD_fake.backward()
-        D_G_z1 = output.mean().item()
-        # Add the gradients from the all-real and all-fake batches
-        errD = errD_real + errD_fake
-        # Update D
-        optimizerD.step()
-
-        ############################
-        # (2) Update G network: maximize log(D(G(z)))
-        ###########################
-        netG.zero_grad()
-        label.fill_(real_label)  # fake labels are real for generator cost
-        # Since we just updated D, perform another forward pass of all-fake batch through D
-        output = netD(fake).view(-1)
-        # Calculate G's loss based on this output
-        errG = criterion(output, label)
-        # Calculate gradients for G
-        errG.backward()
-        D_G_z2 = output.mean().item()
-        # Update G
-        optimizerG.step()
-
-        # Output training stats
-        if i % 50 == 0:
-            print('[%d/%d][%d/%d]\tLoss_D: %.4f\tLoss_G: %.4f\tD(x): %.4f\tD(G(z)): %.4f / %.4f'
-                  % (epoch, num_epochs, i, len(dataloader),
-                     errD.item(), errG.item(), D_x, D_G_z1, D_G_z2))
-
-        # Save Losses for plotting later
-        G_losses.append(errG.item())
-        D_losses.append(errD.item())
-
-        # Check how the generator is doing by saving G's output on fixed_noise
-        if (iters % 500 == 0) or ((epoch == num_epochs-1) and (i == len(dataloader)-1)):
-            with torch.no_grad():
-                fake = netG(fixed_noise).detach().cpu()
-            img_list.append(vutils.make_grid(fake, padding=2, normalize=True))
-
-        iters += 1
+    # Set default params
+    defaults = {
+        'nz': 100,
+        'nc': 1,
+        'ndf': 64,
+        'ngf': 64,
+        'n_epochs': 500,
+        'batch_size': 100,
+        'lrD': 0.0001,
+        'lrG': 0.0001,        
+        'beta1': 0.5,
+        'beta2': 0.999,
+        'nD': 1,
+        'nG': 2,
+        'image_interval': 5,
+        'dataroot': '/home/raynor/datasets/april/velocity/',
+        'modelroot': '/home/raynor/code/seismogan/saved/',
+        'loadD': False,
+        'loadG': False,
+        }
+    
+    # Load params from text file
+    hparams = load_hparams(args.hparams,defaults)
+               
+    print('Entering Hyperparameter Loop')
+        
+    for i,h in enumerate(hparams):
+        
+        
+        writer = SummaryWriter(comment=f'_{h.name}')
+        writer.add_hparams(vars(h),{})
+                
+        dataset = BasicDataset(model_dir=h.dataroot)
+        dataloader = torch.utils.data.DataLoader(dataset, batch_size=h.batch_size, shuffle=True)
+    
+        device = torch.device(f"cuda:{args.gpu}" if (torch.cuda.is_available()) else "cpu")
+        
+        print('Loading models')
+        
+        gen = Generator(h.nz, h.nc, h.ngf, device)
+        discr = Discriminator(h.nc, h.ndf, device)
+        
+        if h.loadD:
+            discr.load_state_dict(torch.load(os.path.join(h.modelroot,h.loadD)))
+            
+        if h.loadG:
+            discr.load_state_dict(torch.load(os.path.join(h.modelroot,h.loadG)))
+        
+        gen_opt = optim.Adam(gen.parameters(), lr=h.lrG, betas=(h.beta1, h.beta2))
+        discr_opt = optim.Adam(discr.parameters(), lr=h.lrD, betas=(h.beta1, h.beta2))
+    
+        print('Beginning training')
+    
+        try:
+            train(
+                dataloader,
+                discr,
+                gen,
+                minimax_discr_loss,
+                minimax_gen_loss,
+                discr_opt,
+                gen_opt,
+                writer,
+                n_epochs = h.n_epochs,
+                n_discr = h.nD,
+                n_gen = h.nG,
+                image_interval = h.image_interval,
+                  )
+            
+            print('Completed training')
+            
+            torch.save(gen.state_dict(), os.path.join(h.modelroot,f'gen_{h.name}.pth'))
+            torch.save(discr.state_dict(), os.path.join(h.modelroot,f'discr_{h.name}.pth'))
+            
+        except KeyboardInterrupt:
+            
+            torch.save(gen.state_dict(), os.path.join(h.modelroot,f'gen_{h.name}_interrupted.pth'))
+            torch.save(discr.state_dict(), os.path.join(h.modelroot,f'discr_{h.name}_interrupted.pth'))
+            
+            print('Interrupted models saved.')
+            
+            if i+1 < len(hparams):
+                response = input("Would you like to exit the hyperparameter loop? (y/n):\n")
+                if response != 'y':
+                    continue
+            
+            sys.exit(0)
+            
+    
+        
+        
+        

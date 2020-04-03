@@ -1,0 +1,2 @@
+name	lrG	lrD	dataroot					modelroot				
+abitha	0.001	0.1	C:/Users/mooselumph/code/data/velocity/	C:/Users/mooselumph/code/seismogan/saved/	
