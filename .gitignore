@@ -1,3 +1,4 @@
 .spyproject/
 runs/
 saved/
+*.pyc

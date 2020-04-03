@@ -16,12 +16,13 @@ import logging
 
 class BasicDataset(Dataset):
     
-    def __init__(self, model_dir=None, gather_dir=None, scale=1):
+    def __init__(self, model_dir=None, gather_dir=None, device=None):
         self.model_dir = model_dir
         self.gather_dir = gather_dir
-        self.scale = scale
-        assert 0 < scale <= 1, 'Scale must be between 0 and 1'
         
+        assert device != None, "device must be defined"
+        self.device = device
+                
         d = model_dir if model_dir else gather_dir
 
         self.ids = [splitext(file)[0] for file in listdir(d)
@@ -44,7 +45,8 @@ class BasicDataset(Dataset):
                 f'Either no model or multiple models found for the ID {idx}: {model_file}'
 
             model = np.load(model_file[0])[np.newaxis,:,:]
-            d['model'] = torch.tensor(model,dtype=torch.float32)
+            model = torch.tensor(model,dtype=torch.float32).to(self.device)
+            d = model
         
         if self.gather_dir:
             gather_file = glob(self.gather_dir + idx + '*')
@@ -52,7 +54,11 @@ class BasicDataset(Dataset):
             assert len(gather_file) == 1, \
                 f'Either no gather file or multiple files found for the ID {idx}: {gather_file}'
                 
-            d['gather'] = torch.tensor(np.load(gather_file[0]),dtype=torch.float32)
+            gather = torch.tensor(np.load(gather_file[0]),dtype=torch.float32).to(self.device)
+            d = gather
+
+        if self.gather_dir and self.model_dir:
+            d = {'model':model,'gather':gather}
 
         return d 
 

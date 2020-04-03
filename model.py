@@ -5,15 +5,29 @@ Created on Thu Mar 26 09:48:29 2020
 @author: mooselumph
 """
 
-
+import torch
 import torch.nn as nn
+
+
+# custom weights initialization called on netG and netD
+def weights_init(m):
+    classname = m.__class__.__name__
+    if classname.find('Conv') != -1:
+        nn.init.normal_(m.weight.data, 0.0, 0.02)
+    elif classname.find('BatchNorm') != -1:
+        nn.init.normal_(m.weight.data, 1.0, 0.02)
+        nn.init.constant_(m.bias.data, 0)
+
 
 # Generator Code
 
 class Generator(nn.Module):
-    def __init__(self, ngpu, nz, ngf, nc):
+    def __init__(self, nz, nc, ngf, device):
         super(Generator, self).__init__()
-        self.ngpu = ngpu
+        
+        self.device = device
+        self.nz = nz
+        
         self.main = nn.Sequential(
             # input is Z, going into a convolution
             nn.ConvTranspose2d( nz, ngf * 8, 4, 1, 0, bias=False),
@@ -40,15 +54,27 @@ class Generator(nn.Module):
             nn.Tanh()
             # state size. (nc) x 128 x 128
         )
+        
+        self.to(device)
+        
+        self.apply(weights_init)
+    
+    def sample(self,batch_size):
+        
+        noise = torch.randn((batch_size, self.nz, 1, 1), device=self.device)
+        fake = self.forward(noise)
+        return fake
 
     def forward(self, input):
         return self.main(input)
     
     
 class Discriminator(nn.Module):
-    def __init__(self, ngpu, nc, ndf):
+    def __init__(self, nc, ndf, device):
         super(Discriminator, self).__init__()
-        self.ngpu = ngpu
+        
+        self.device = device
+        
         self.main = nn.Sequential(
             # input is (nc) x 128 x 128
             nn.Conv2d(nc, ndf, 4, 2, 1, bias=False),
@@ -71,18 +97,12 @@ class Discriminator(nn.Module):
             nn.LeakyReLU(0.2, inplace=True),
             # state size. (ndf*8) x 4 x 4
             nn.Conv2d(ndf * 8, 1, 4, 1, 0, bias=False),
-            nn.Sigmoid()
         )
+        
+        self.to(device)
+                
+        self.apply(weights_init)
 
     def forward(self, input):
         return self.main(input)
     
-
-# custom weights initialization called on netG and netD
-def weights_init(m):
-    classname = m.__class__.__name__
-    if classname.find('Conv') != -1:
-        nn.init.normal_(m.weight.data, 0.0, 0.02)
-    elif classname.find('BatchNorm') != -1:
-        nn.init.normal_(m.weight.data, 1.0, 0.02)
-        nn.init.constant_(m.bias.data, 0)
