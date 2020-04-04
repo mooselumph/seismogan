@@ -58,6 +58,9 @@ def load_models(load_dir,gen,discr,step=None):
         step = max(steps)
         name = f'checkpoint_{step}.pth'
         
-    checkpoint = torch.load(os.path.join(load_dir,name))
+    fname =  os.path.join(load_dir,name)   
+    checkpoint = torch.load(fname)
     discr.load_state_dict(checkpoint['discr'])
     gen.load_state_dict(checkpoint['gen'])
+
+    return fname

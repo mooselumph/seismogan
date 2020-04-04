@@ -14,6 +14,8 @@ import torch
 import torch.nn.functional as F
 import torch.optim as optim
 
+import torchvision.utils as vutils
+from tqdm import tqdm
 from torch.utils.tensorboard import SummaryWriter
 from types import SimpleNamespace
 
@@ -56,6 +58,7 @@ def train(
         discr_optimizer,
         gen_optimizer,
         tb_writer,
+        device,
         n_epochs = 500,
         n_discr = 1,
         n_gen = 1,
@@ -73,60 +76,64 @@ def train(
     step = 0
     
     try:
-    
-        for epoch in range(n_epochs):
-            
-            for real in dataloader:
-                
-                # Get real and fake data
-                batch_size = real.shape[0]
-                fake = gen.sample(batch_size = batch_size)
-                                
-                # Train Discriminator
-                discr_optimizer.zero_grad()  
-
-                D_real = discr(real)
-                D_fake = discr(fake.detach())
-
-                loss_discr = discr_loss(D_real,D_fake)
-                loss_discr.backward()
-    
-                if epoch % (n_gen + n_discr) < n_discr:
-                    discr_optimizer.step()
-                                
-                # Train Generator
-                gen_optimizer.zero_grad()
-
-                D_fake = discr(fake)
-
-                loss_gen = gen_loss(D_fake)
-                loss_gen.backward()
-
-                if epoch % (n_gen + n_discr) >= n_discr:
-                    gen_optimizer.step()
-                    
-                # Log Losses
-                tb_writer.add_scalars('Discriminator',
-                                      {'D_real':torch.sigmoid(D_real).mean().item(),
-                                       'D_fake':torch.sigmoid(D_fake).mean().item()},step)
-                tb_writer.add_scalar('loss_D',loss_discr,step)
-                tb_writer.add_scalar('loss_G',loss_gen,step)
-                
-                # Show generated images
-                if step % int(image_interval*len(dataloader)) == 1 or (step == len(dataloader)*n_epochs - 1):
-                    
-                    with torch.no_grad():
-                        fake = gen.fixed_sample().detach().cpu()    
-                    #grid = vutils.make_grid(fake, padding=2, normalize=True[np.newaxis]
-                    tb_writer.add_images('images', fake, step)
-                    
-                    
-                if step % int(save_interval*len(dataloader)) == 1 or (step == len(dataloader)*n_epochs - 1):
-                    save_models(save_dir,gen,discr,step)
-                    
-                    
-                step += 1
         
+        with tqdm(total=n_epochs, desc=f'Progress: ',unit='epoch') as pbar:            
+    
+            for epoch in range(n_epochs):
+                                
+                for real in dataloader:
+                    
+                    # Get real and fake data
+                    real = real.to(device)
+                    batch_size = real.shape[0]
+                    fake = gen.sample(batch_size = batch_size)
+                                    
+                    # Train Discriminator
+                    discr_optimizer.zero_grad()  
+
+                    D_real = discr(real)
+                    D_fake = discr(fake.detach())
+
+                    loss_discr = discr_loss(D_real,D_fake)
+                    loss_discr.backward()
+        
+                    if epoch % (n_gen + n_discr) < n_discr:
+                        discr_optimizer.step()
+                                    
+                    # Train Generator
+                    gen_optimizer.zero_grad()
+
+                    D_fake = discr(fake)
+
+                    loss_gen = gen_loss(D_fake)
+                    loss_gen.backward()
+
+                    if epoch % (n_gen + n_discr) >= n_discr:
+                        gen_optimizer.step()
+                        
+                    # Log Losses
+                    tb_writer.add_scalar('D_real',torch.sigmoid(D_real).mean().item(),step)
+                    tb_writer.add_scalar('D_fake',torch.sigmoid(D_fake).mean().item(),step)
+                    tb_writer.add_scalar('loss_D',loss_discr.item(),step)
+                    tb_writer.add_scalar('loss_G',loss_gen.item(),step)
+                    
+                    # Show generated images
+                    if step % int(image_interval*len(dataloader)) == 1 or (step == len(dataloader)*n_epochs - 1):
+                        
+                        with torch.no_grad():
+                            fake = gen.fixed_sample().detach().cpu()    
+                        grid = vutils.make_grid(fake, padding=2, normalize=True)[np.newaxis]
+                        tb_writer.add_images('images', grid, step)
+                        
+                        
+                    if step % int(save_interval*len(dataloader)) == 1 or (step == len(dataloader)*n_epochs - 1):
+                        save_models(save_dir,gen,discr,step)
+                        
+                        
+                    step += 1
+            
+                pbar.set_postfix(**{'loss_D':loss_discr.item(),'loss_G':loss_discr.item()})
+                pbar.update()
             
         return True
                 
@@ -166,7 +173,7 @@ if __name__ == '__main__':
         'save_interval': 2,
         'dataroot': '/home/raynor/datasets/april/velocity/',
         'modelroot': '/home/raynor/code/seismogan/saved/',
-        'load_name': '',
+        'load_name': 'None',
         'load_step': -1,
         }
     
@@ -174,6 +181,7 @@ if __name__ == '__main__':
     hparams = load_hparams(args.hparams,defaults)
     
     device = torch.device(f"cuda:{args.gpu}" if (torch.cuda.is_available()) else "cpu")
+    print(f'Using device: {device}')
                        
     print('Entering Hyperparameter Loop')
         
@@ -181,18 +189,21 @@ if __name__ == '__main__':
         
         with SummaryWriter(comment=f'_{h.name}') as writer:
             
+            print(f'Run name: {h.name}')
+
             writer.add_hparams(vars(h),{})
                     
-            dataset = BasicDataset(model_dir=h.dataroot,device=device)
-            dataloader = torch.utils.data.DataLoader(dataset, batch_size=h.batch_size, shuffle=True)
+            dataset = BasicDataset(model_dir=h.dataroot)
+            dataloader = torch.utils.data.DataLoader(dataset, batch_size=h.batch_size, num_workers=8, shuffle=True)
         
             print('Loading models')
             
             gen = Generator(h.nz, h.nc, h.ngf, device)
             discr = Discriminator(h.nc, h.ndf, device)
             
-            if h.load_name:
-                load_models(os.path.join(h.modelroot,h.load_name),gen,discr,h.load_step)
+            if h.load_name.lower() != 'none':
+                fname = load_models(os.path.join(h.modelroot,h.load_name),gen,discr,h.load_step)
+                print (f'Loaded model: {fname}')
                 
             gen_opt = optim.Adam(gen.parameters(), lr=h.lrG, betas=(h.beta1, h.beta2))
             discr_opt = optim.Adam(discr.parameters(), lr=h.lrD, betas=(h.beta1, h.beta2))
@@ -213,6 +224,7 @@ if __name__ == '__main__':
                 discr_opt,
                 gen_opt,
                 writer,
+                device,
                 n_epochs = h.n_epochs,
                 n_discr = h.nD,
                 n_gen = h.nG,

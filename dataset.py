@@ -16,13 +16,10 @@ import logging
 
 class BasicDataset(Dataset):
     
-    def __init__(self, model_dir=None, gather_dir=None, device=None):
+    def __init__(self, model_dir=None, gather_dir=None):
         self.model_dir = model_dir
         self.gather_dir = gather_dir
-        
-        assert device != None, "device must be defined"
-        self.device = device
-                
+                        
         d = model_dir if model_dir else gather_dir
 
         self.ids = [splitext(file)[0] for file in listdir(d)
@@ -48,7 +45,7 @@ class BasicDataset(Dataset):
             model -= np.min(model,axis=None)
             model /= np.max(model,axis=None)
             model = model*2-1
-            model = torch.tensor(model,dtype=torch.float32).to(self.device)
+            model = torch.tensor(model,dtype=torch.float32)
             d = model
         
         if self.gather_dir:
@@ -57,7 +54,7 @@ class BasicDataset(Dataset):
             assert len(gather_file) == 1, \
                 f'Either no gather file or multiple files found for the ID {idx}: {gather_file}'
                 
-            gather = torch.tensor(np.load(gather_file[0]),dtype=torch.float32).to(self.device)
+            gather = torch.tensor(np.load(gather_file[0]),dtype=torch.float32)
             d = gather
 
         if self.gather_dir and self.model_dir:
