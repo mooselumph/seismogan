@@ -7,21 +7,22 @@ Created on Mon Mar 30 08:50:01 2020
 
 import random
 import numpy as np
-import os
+import os, sys
 import argparse
+import pandas as pd
 import torch
 import torch.nn.functional as F
 import torch.optim as optim
 
+import torchvision.utils as vutils
 from tqdm import tqdm
 from torch.utils.tensorboard import SummaryWriter
-import torchvision.utils as vutils
+from types import SimpleNamespace
 
-from utils import get_models, save_models
+from utils import load_hparams, save_models, load_models
 
+from model import Discriminator, Generator
 from dataset import BasicDataset
-
-from fid import fid_scorer
 
 
 def minimax_discr_loss(D_real,D_fake):
@@ -61,17 +62,14 @@ def train(
         n_epochs = 500,
         n_discr = 1,
         n_gen = 1,
-        image_interval = 20,
-        save_interval = 20,
-        score_interval = 20,
+        image_interval = 1,
+        save_interval = 1,
         save_dir = None,
         scheduler = None,
-        scorer = None,
         seed = 999,
         ):
     
     
-    # Set random seed for reproduceability
     random.seed(seed)
     torch.manual_seed(seed)
             
@@ -114,38 +112,27 @@ def train(
                         gen_optimizer.step()
                         
                     # Log Losses
-                    stats = {'loss_D':loss_discr.item(),'loss_G':loss_discr.item()}
                     tb_writer.add_scalar('D_real',torch.sigmoid(D_real).mean().item(),step)
                     tb_writer.add_scalar('D_fake',torch.sigmoid(D_fake).mean().item(),step)
-                    tb_writer.add_scalar('loss_D',stats['loss_D'],step)
-                    tb_writer.add_scalar('loss_G',stats['loss_G'],step)
-                    
-                    
-                    is_last_epoch = (step == len(dataloader)*n_epochs - 1)
+                    tb_writer.add_scalar('loss_D',loss_discr.item(),step)
+                    tb_writer.add_scalar('loss_G',loss_gen.item(),step)
                     
                     # Show generated images
-                    if step % int(image_interval*len(dataloader)) == 1 or is_last_epoch:
+                    if step % int(image_interval*len(dataloader)) == 1 or (step == len(dataloader)*n_epochs - 1):
                         
                         with torch.no_grad():
-                            fake = gen.fixed_sample().detach().cpu()
-                            
-                        fake = vutils.make_grid(fake, padding=2, normalize=True)[np.newaxis]
-                        tb_writer.add_images('images', fake, step)
+                            fake = gen.fixed_sample().detach().cpu()    
+                        grid = vutils.make_grid(fake, padding=2, normalize=True)[np.newaxis]
+                        tb_writer.add_images('images', grid, step)
                         
-                    # Save model
-                    if step % int(save_interval*len(dataloader)) == 1 or is_last_epoch:
+                        
+                    if step % int(save_interval*len(dataloader)) == 1 or (step == len(dataloader)*n_epochs - 1):
                         save_models(save_dir,gen,discr,step)
-                        
-                    # Get score
-                    if scorer:
-                        if step % int(score_interval*len(dataloader)) == 1 or is_last_epoch:
-                            stats['score'] = scorer.get_score()                        
                         
                         
                     step += 1
             
-                # Update progress bar
-                pbar.set_postfix(**stats)
+                pbar.set_postfix(**{'loss_D':loss_discr.item(),'loss_G':loss_discr.item()})
                 pbar.update()
             
         return True
@@ -158,7 +145,7 @@ def train(
 if __name__ == '__main__':
     
     
-    print('Loading hyperparameters')
+    print('Loading hyperparameters.')
     
     # Get location of hparams.txt
     parser = argparse.ArgumentParser(description='Train a GAN!')
@@ -168,31 +155,56 @@ if __name__ == '__main__':
                         help='Number of GPU to use', dest='gpu')
     args = parser.parse_args()
 
-
-    device = torch.device(f"cuda:{args.gpu}" if (torch.cuda.is_available()) else "cpu")
-    print(f'Using device: {device}')
-    
-    # Load scorer
-    scorer = fid_scorer(device)
+    # Set default params
+    defaults = {
+        'nz': 100,
+        'nc': 1,
+        'ndf': 64,
+        'ngf': 64,
+        'n_epochs': 500,
+        'batch_size': 100,
+        'lrD': 0.0001,
+        'lrG': 0.0001,        
+        'beta1': 0.5,
+        'beta2': 0.999,
+        'nD': 1,
+        'nG': 2,
+        'image_interval': 1,
+        'save_interval': 2,
+        'dataroot': '/home/raynor/datasets/april/velocity/',
+        'modelroot': '/home/raynor/code/seismogan/saved/',
+        'load_name': 'None',
+        'load_step': -1,
+        }
     
     # Load params from text file
-    models = get_models(args.hparams,device)
+    hparams = load_hparams(args.hparams,defaults)
+    
+    device = torch.device(f"cuda:{args.gpu}" if (torch.cuda.is_available()) else "cpu")
+    print(f'Using device: {device}')
                        
     print('Entering Hyperparameter Loop')
         
-    for h,gen,discr in models:
+    for i,h in enumerate(hparams):
         
         with SummaryWriter(comment=f'_{h.name}') as writer:
             
             print(f'Run name: {h.name}')
 
             writer.add_hparams(vars(h),{})
-            
-            scorer.set_params(writer,h.dataroot,h.name)
                     
             dataset = BasicDataset(model_dir=h.dataroot)
             dataloader = torch.utils.data.DataLoader(dataset, batch_size=h.batch_size, num_workers=8, shuffle=True)
-    
+        
+            print('Loading models')
+            
+            gen = Generator(h.nz, h.nc, h.ngf, device)
+            discr = Discriminator(h.nc, h.ndf, device)
+            
+            if h.load_name.lower() != 'none':
+                fname = load_models(os.path.join(h.modelroot,h.load_name),gen,discr,h.load_step)
+                print (f'Loaded model: {fname}')
+                
             gen_opt = optim.Adam(gen.parameters(), lr=h.lrG, betas=(h.beta1, h.beta2))
             discr_opt = optim.Adam(discr.parameters(), lr=h.lrD, betas=(h.beta1, h.beta2))
         
@@ -201,7 +213,7 @@ if __name__ == '__main__':
             if not os.path.exists(save_dir):
                 os.mkdir(save_dir)
                 
-            print('Beginning training', flush=True)
+            print('Beginning training')
         
             completed = train(
                 dataloader,
@@ -218,9 +230,7 @@ if __name__ == '__main__':
                 n_gen = h.nG,
                 image_interval = h.image_interval,
                 save_interval = h.save_interval,
-                score_interval = h.score_interval,
-                save_dir = save_dir,
-                scorer=scorer
+                save_dir = save_dir
                   )
             
             if completed:
@@ -228,7 +238,7 @@ if __name__ == '__main__':
             
             else:
                 print('Interrupted models saved.')
-                if h.has_next:
+                if i+1 < len(hparams):
                      response = input("Would you like to exit the hyperparameter loop? (y/n):\n")
                      if response == 'y':
                          break

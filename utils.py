@@ -11,6 +11,8 @@ import numpy as np
 import pandas as pd
 from types import SimpleNamespace
 
+import model
+
 def load_hparams(fname,defaults):
     
     
@@ -38,6 +40,60 @@ def load_hparams(fname,defaults):
     return args
 
 
+def get_models(fname_hparams,device,load_gen=True,load_discr=True,verbose=True):
+    
+     # Set default params
+    defaults = {
+        'model': 'DCGAN',
+        'nz': 100,
+        'nc': 1,
+        'ndf': 64,
+        'ngf': 64,
+        'n_epochs': 500,
+        'batch_size': 100,
+        'lrD': 0.0001,
+        'lrG': 0.0001,        
+        'beta1': 0.5,
+        'beta2': 0.999,
+        'nD': 1,
+        'nG': 2,
+        'image_interval': 20,
+        'save_interval': 20,
+        'score_interval': 20,
+        'dataroot': '/home/raynor/datasets/april/velocity/',
+        'modelroot': '/home/raynor/code/seismogan/saved/',
+        'load_name': 'None',
+        'load_step': -1,
+        }
+    
+    # Load params from text file
+    hparams = load_hparams(fname_hparams,defaults)
+                          
+    for i,h in enumerate(hparams):
+        
+            if verbose:
+                print('Loading models')
+            
+            if h.model == 'DCGAN':
+                gen = model.Generator(h.nz, h.nc, h.ngf, device) if load_gen else None
+                discr = model.Discriminator(h.nc, h.ndf, device) if load_discr else None
+            else:
+                raise NotImplementedError
+            
+            if h.load_name.lower() != 'none':
+                fname = load_models(os.path.join(h.modelroot,h.load_name),gen,discr,h.load_step)
+                
+                if verbose:
+                    print (f'Loaded model: {fname}')
+                    
+            h.has_next = i+1 < len(hparams)
+                    
+            yield h,gen,discr
+
+
+
+
+
 def save_models(save_dir,gen,discr,step):
     
     name = f'checkpoint_{step}.pth'
@@ -55,12 +111,25 @@ def load_models(load_dir,gen,discr,step=None):
         files = glob.glob(os.path.join(load_dir,"*.pth"))
         files = [os.path.splitext(os.path.basename(f))[0] for f in files]
         steps = [int(re.findall('checkpoint_(.+)',f)[0]) for f in files]
+        
+        assert steps, "No models of the specified name were found."
+        
         step = max(steps)
         name = f'checkpoint_{step}.pth'
         
     fname =  os.path.join(load_dir,name)   
     checkpoint = torch.load(fname)
-    discr.load_state_dict(checkpoint['discr'])
-    gen.load_state_dict(checkpoint['gen'])
+    
+    if discr:
+        discr.load_state_dict(checkpoint['discr'])
+    if gen:
+        gen.load_state_dict(checkpoint['gen'])
 
     return fname
+
+
+class nullcontext():
+    def __enter__(self):
+        return None
+    def __exit__(self, exc_type, exc_value, traceback):
+        return False
