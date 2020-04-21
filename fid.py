@@ -1,9 +1,12 @@
 from dataset import BasicDataset
 from skimage.io import imsave
 import os
+from shutil import rmtree
+
 import numpy as np
 import torch
 
+import hashlib
 import argparse
 
 import sys
@@ -21,10 +24,9 @@ BATCH_SIZE = 20
 DIMS = 768
 
 
-def get_tag(obj,dims):
+def get_tag(string,dims):
     
-    tag = hash(obj)
-    tag = ('0' if tag < 0 else 1) + str(abs(tag))
+    tag = hashlib.md5(string.encode()).hexdigest()
     return f'{dims}_{tag}'
 
 def get_data_statistics(data_path,model,dims=DIMS,cuda=True,batch_size=BATCH_SIZE):
@@ -43,7 +45,7 @@ def get_data_statistics(data_path,model,dims=DIMS,cuda=True,batch_size=BATCH_SIZ
         m, s, num = stats['m'], stats['s'], stats['num_samples']
         
     else:
-        temp_path = os.path.join(TEMP_DIR,tag)
+        temp_path = os.path.join(TEMP_DIR,tag) + '/'
     
         if not os.path.exists(temp_path):
             os.mkdir(temp_path)
@@ -63,7 +65,7 @@ def get_data_statistics(data_path,model,dims=DIMS,cuda=True,batch_size=BATCH_SIZ
                 for i in range(batch.shape[0]):
                 
                     img = np.tile(batch[i].transpose(1,2,0),(1,1,3)) 
-                    imsave(os.path.join(TEMP_DIR,f'img_{num}.png'),img)
+                    imsave(os.path.join(temp_path,f'img_{num}.png'),img)
                     
                     num += 1
         else:
@@ -73,6 +75,9 @@ def get_data_statistics(data_path,model,dims=DIMS,cuda=True,batch_size=BATCH_SIZ
             model.cuda()
         
         m,s = fid_score._compute_statistics_of_path(temp_path, model, batch_size=batch_size, cuda=cuda, dims=dims)
+
+        # Remove dump folder
+        rmtree(temp_path)
         
         np.savez(fname, m = m, s = s, num_samples = num)
         
@@ -82,7 +87,7 @@ def get_data_statistics(data_path,model,dims=DIMS,cuda=True,batch_size=BATCH_SIZ
 def get_gen_statistics(gen,name,num_samples,model,dims=DIMS,cuda=True,batch_size=BATCH_SIZE):
 
     tag = get_tag(name,dims)    
-    temp_path = os.path.join(TEMP_DIR,tag)
+    temp_path = os.path.join(TEMP_DIR,tag) + '/'
 
     # Generate a folder full of generated images
     if not os.path.exists(temp_path):
@@ -107,6 +112,9 @@ def get_gen_statistics(gen,name,num_samples,model,dims=DIMS,cuda=True,batch_size
         model.cuda()
     
     m,s = fid_score._compute_statistics_of_path(temp_path, model, batch_size=batch_size, cuda=cuda, dims=dims)
+
+    # Remove dump dir
+    rmtree(temp_path)
     
     return m,s
 
@@ -140,6 +148,7 @@ class fid_scorer():
         self.dims = dims
         self.data_path = None
         self.gen_name = None
+        self.num_samples = num_samples
         self.cuda = device.type == 'cuda'
         
         if verbose:
@@ -147,11 +156,12 @@ class fid_scorer():
 
         block_idx = InceptionV3.BLOCK_INDEX_BY_DIM[dims]
         self.inception = InceptionV3([block_idx]).to(device)
+        #self.inception = torch.nn.Module()
         
         if verbose:
             print('Finished loading inception')
         
-    def set_params(self,writer,data_path,gen_name):
+    def set_params(self,data_path,gen_name,writer):
         
         self.writer = writer
         self.data_path = data_path
@@ -159,12 +169,13 @@ class fid_scorer():
         
     def get_score(self,gen,step):
         
-        assert self.writer and self.data_path and self.gen_name, "run set_params()"
+        assert self.data_path and self.gen_name, "run set_params()"
                 
         fid_score = get_fid_score(gen,self.gen_name,self.data_path,self.inception,
                                 num_samples=self.num_samples,cuda=self.cuda)
         
-        self.writer.add_scalar('FID_score',fid_score,step)
+        if self.writer:
+            self.writer.add_scalar('FID_score',fid_score,step)
         
         return fid_score
 

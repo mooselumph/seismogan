@@ -17,7 +17,7 @@ from tqdm import tqdm
 from torch.utils.tensorboard import SummaryWriter
 import torchvision.utils as vutils
 
-from utils import get_models, save_models
+from utils import get_models, save_models, nullcontext
 
 from dataset import BasicDataset
 
@@ -56,7 +56,6 @@ def train(
         gen_loss,
         discr_optimizer,
         gen_optimizer,
-        tb_writer,
         device,
         n_epochs = 500,
         n_discr = 1,
@@ -65,9 +64,11 @@ def train(
         save_interval = 20,
         score_interval = 20,
         save_dir = None,
+        tb_writer = None,
         scheduler = None,
         scorer = None,
         seed = 999,
+        verbose = True,
         ):
     
     
@@ -113,24 +114,25 @@ def train(
                     if epoch % (n_gen + n_discr) >= n_discr:
                         gen_optimizer.step()
                         
-                    # Log Losses
-                    stats = {'loss_D':loss_discr.item(),'loss_G':loss_discr.item()}
-                    tb_writer.add_scalar('D_real',torch.sigmoid(D_real).mean().item(),step)
-                    tb_writer.add_scalar('D_fake',torch.sigmoid(D_fake).mean().item(),step)
-                    tb_writer.add_scalar('loss_D',stats['loss_D'],step)
-                    tb_writer.add_scalar('loss_G',stats['loss_G'],step)
-                    
-                    
                     is_last_epoch = (step == len(dataloader)*n_epochs - 1)
                     
-                    # Show generated images
-                    if step % int(image_interval*len(dataloader)) == 1 or is_last_epoch:
-                        
-                        with torch.no_grad():
-                            fake = gen.fixed_sample().detach().cpu()
+                    # Log Losses and Images
+                    stats = {'loss_D':loss_discr.item(),'loss_G':loss_discr.item()}
+                    if tb_writer:
+                        tb_writer.add_scalar('D_real',torch.sigmoid(D_real).mean().item(),step)
+                        tb_writer.add_scalar('D_fake',torch.sigmoid(D_fake).mean().item(),step)
+                        tb_writer.add_scalar('loss_D',stats['loss_D'],step)
+                        tb_writer.add_scalar('loss_G',stats['loss_G'],step)
+                    
+                        # Show generated images
+                        if step % int(image_interval*len(dataloader)) == 1 or is_last_epoch:
                             
-                        fake = vutils.make_grid(fake, padding=2, normalize=True)[np.newaxis]
-                        tb_writer.add_images('images', fake, step)
+                            with torch.no_grad():
+                                fake = gen.fixed_sample().detach().cpu()
+                            
+                            fake = F.interpolate(fake,scale_factor=[1,1,0.5,0.5],mode='bilinear')
+                            fake = vutils.make_grid(fake, padding=2, normalize=True)[np.newaxis]
+                            tb_writer.add_images('images', fake, step)
                         
                     # Save model
                     if step % int(save_interval*len(dataloader)) == 1 or is_last_epoch:
@@ -139,8 +141,9 @@ def train(
                     # Get score
                     if scorer:
                         if step % int(score_interval*len(dataloader)) == 1 or is_last_epoch:
-                            stats['score'] = scorer.get_score()                        
-                        
+                            if verbose:
+                                print('Calculating score')
+                            stats['score'] = scorer.get_score(gen,step)
                         
                     step += 1
             
@@ -164,8 +167,12 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Train a GAN!')
     parser.add_argument('-H', '--hparams', metavar='filename', type=str, default='hparams.txt',
                         help='File containing hyperparamters', dest='hparams')
-    parser.add_argument('-g', '--gpu', metavar='number', type=int, default='0',
+    parser.add_argument('--gpu', metavar='number', type=int, default=0,
                         help='Number of GPU to use', dest='gpu')
+    parser.add_argument('--use_writer', type=int, default=1,
+                        choices=[0,1],help='Whether to write to tensorbaord')                    
+    parser.add_argument('--use_scorer', type=int, default=1,
+                        choices=[0,1],help='Whether to calculate FID score')    
     args = parser.parse_args()
 
 
@@ -173,7 +180,7 @@ if __name__ == '__main__':
     print(f'Using device: {device}')
     
     # Load scorer
-    scorer = fid_scorer(device)
+    scorer = fid_scorer(device) if args.use_scorer else None
     
     # Load params from text file
     models = get_models(args.hparams,device)
@@ -182,13 +189,15 @@ if __name__ == '__main__':
         
     for h,gen,discr in models:
         
-        with SummaryWriter(comment=f'_{h.name}') as writer:
+        with (SummaryWriter(comment=f'_{h.name}') if args.use_writer else nullcontext) as writer:
             
             print(f'Run name: {h.name}')
 
-            writer.add_hparams(vars(h),{})
+            if writer:
+                writer.add_hparams(vars(h),{})
             
-            scorer.set_params(writer,h.dataroot,h.name)
+            if scorer:
+                scorer.set_params(h.dataroot,h.name,writer)
                     
             dataset = BasicDataset(model_dir=h.dataroot)
             dataloader = torch.utils.data.DataLoader(dataset, batch_size=h.batch_size, num_workers=8, shuffle=True)
@@ -211,7 +220,6 @@ if __name__ == '__main__':
                 minimax_gen_loss,
                 discr_opt,
                 gen_opt,
-                writer,
                 device,
                 n_epochs = h.n_epochs,
                 n_discr = h.nD,
@@ -220,7 +228,8 @@ if __name__ == '__main__':
                 save_interval = h.save_interval,
                 score_interval = h.score_interval,
                 save_dir = save_dir,
-                scorer=scorer
+                tb_writer = writer,
+                scorer = scorer
                   )
             
             if completed:

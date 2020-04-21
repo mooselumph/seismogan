@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 from types import SimpleNamespace
 
-import model
+from models import DCGAN, DCGAN_SN, original, original_SN, original_SN2
 
 def load_hparams(fname,defaults):
     
@@ -44,7 +44,7 @@ def get_models(fname_hparams,device,load_gen=True,load_discr=True,verbose=True):
     
      # Set default params
     defaults = {
-        'model': 'DCGAN',
+        'model': 'original',
         'nz': 100,
         'nc': 1,
         'ndf': 64,
@@ -70,13 +70,29 @@ def get_models(fname_hparams,device,load_gen=True,load_discr=True,verbose=True):
     hparams = load_hparams(fname_hparams,defaults)
                           
     for i,h in enumerate(hparams):
+
+            if os.path.exists(os.path.join(h.modelroot,h.name)):
+                print(f'{h.name} folder exists. Skipping.')
+                continue
         
             if verbose:
                 print('Loading models')
             
             if h.model == 'DCGAN':
-                gen = model.Generator(h.nz, h.nc, h.ngf, device) if load_gen else None
-                discr = model.Discriminator(h.nc, h.ndf, device) if load_discr else None
+                gen = DCGAN.Generator(h.nz, h.nc, h.ngf, device) if load_gen else None
+                discr = DCGAN.Discriminator(h.nc, h.ndf, device) if load_discr else None
+            elif h.model == 'DCGAN_SN':
+                gen = DCGAN_SN.Generator(h.nz, h.nc, h.ngf, device) if load_gen else None
+                discr = DCGAN_SN.Discriminator(h.nc, h.ndf, device) if load_discr else None
+            elif h.model == 'original':
+                gen = original.Generator(h.nz, h.nc, h.ngf, device) if load_gen else None
+                discr = original.Discriminator(h.nc, h.ndf, device) if load_discr else None
+            elif h.model == 'original_SN':
+                gen = original_SN.Generator(h.nz, h.nc, h.ngf, device) if load_gen else None
+                discr = original_SN.Discriminator(h.nc, h.ndf, device) if load_discr else None
+            elif h.model == 'original_SN2':
+                gen = original_SN2.Generator(h.nz, h.nc, h.ngf, device) if load_gen else None
+                discr = original_SN2.Discriminator(h.nc, h.ndf, device) if load_discr else None
             else:
                 raise NotImplementedError
             
@@ -132,4 +148,6 @@ class nullcontext():
     def __enter__(self):
         return None
     def __exit__(self, exc_type, exc_value, traceback):
+        return False
+    def __bool__(self):
         return False
